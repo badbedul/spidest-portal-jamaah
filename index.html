@@ -6429,105 +6429,110 @@ window.addEventListener("popstate", function(event){
 
 <script id="spidest-jamaah-voice-js">
 (function(){
-  /* ==========================================================
-     SPIDEST V3 — JAMAAH ONE-WAY TOUR LEADER VOICE
-     Source of truth for Jamaah session: getSession()/localStorage.
-     Jamaah is receive-only; no microphone is requested.
-  ========================================================== */
+  /* SPIDEST V3 — JAMAAH ONE-WAY TOUR LEADER VOICE (stable reconnect lifecycle) */
   let pollTimer=null,statusTimer=null,currentRoom=null,pc=null,seenSignals=new Set(),audioEl=null;
   let lastRoomId='',voiceAudioUnlocked=false;
 
   function getJamaahToken(){
     try{
       if(typeof getSession==='function'){
-        const s=getSession();
-        return String(s&&s.token||'').trim();
+        const ss=getSession(); return String(ss&&ss.token||'').trim();
       }
-      const s=JSON.parse(localStorage.getItem('SPIDEST_V3_SESSION')||'null');
-      return String(s&&s.token||'').trim();
-    }catch(e){ return ''; }
+      const ss=JSON.parse(localStorage.getItem('SPIDEST_V3_SESSION')||'null');
+      return String(ss&&ss.token||'').trim();
+    }catch(e){return '';}
   }
-
   async function call(action,data){
     const t=getJamaahToken();
-    if(!t) throw new Error('Sesi Jamaah belum tersedia.');
-    if(typeof apiRequest==='function') return apiRequest(action,{token:t,...data});
+    if(!t)throw new Error('Sesi Jamaah belum tersedia.');
+    if(typeof apiRequest==='function')return apiRequest(action,{token:t,...data});
     throw new Error('API Jamaah belum tersedia.');
+  }
+
+  function ensureAudio(){
+    const body=document.getElementById('jamaahVoiceBody');
+    if(!body)return null;
+    let a=document.getElementById('jamaahVoiceAudio');
+    if(!a){
+      a=document.createElement('audio');
+      a.id='jamaahVoiceAudio';
+      a.className='jamaah-voice-audio';
+      a.autoplay=true; a.playsInline=true; a.controls=true;
+      body.appendChild(a);
+    }
+    audioEl=a;
+    audioEl.autoplay=true; audioEl.playsInline=true; audioEl.muted=false; audioEl.volume=1;
+    return a;
   }
 
   function setUI(active,room){
     const section=document.getElementById('jamaahVoiceSection');
     const card=document.getElementById('jamaahVoiceCard');
     if(!section||!card)return;
-    section.style.display='block';
-    card.style.display='block';
-    const pill=document.getElementById('jamaahVoicePill');
-    const sub=document.getElementById('jamaahVoiceSub');
-    const body=document.getElementById('jamaahVoiceBody');
+    section.style.display='block'; card.style.display='block';
+    const pill=document.getElementById('jamaahVoicePill'), sub=document.getElementById('jamaahVoiceSub'), body=document.getElementById('jamaahVoiceBody');
     if(!pill||!sub||!body)return;
-
     if(active&&room){
-      pill.textContent='● LIVE';
-      pill.classList.add('live');
+      pill.textContent='● LIVE'; pill.classList.add('live');
       sub.textContent=(room.leader_name||'Tour Leader')+' sedang berbicara';
-      body.innerHTML='<div class="jamaah-voice-listen"><div class="icon">🔊</div><div class="copy">Siaran Tour Leader<small>Audio langsung dari rombongan Anda</small></div></div><audio id="jamaahVoiceAudio" class="jamaah-voice-audio" autoplay playsinline controls></audio><button id="jamaahVoiceEnable" class="jamaah-voice-enable">🔊 Aktifkan suara</button>';
-      audioEl=document.getElementById('jamaahVoiceAudio');
-      if(audioEl){
-        audioEl.autoplay=true;
-        audioEl.playsInline=true;
-        audioEl.muted=false;
-        audioEl.volume=1;
-      }
-      const btn=document.getElementById('jamaahVoiceEnable');
-      if(btn)btn.onclick=async()=>{
-        voiceAudioUnlocked=true;
-        try{
-          if(audioEl){
-            audioEl.muted=false;
-            audioEl.volume=1;
-            await audioEl.play();
-            btn.textContent='🔊 Suara aktif';
-          }
-        }catch(e){
-          btn.textContent='🔊 Menunggu audio…';
-          console.warn('SPIDEST voice audio:',e.message||e);
-        }
-      };
+      body.innerHTML='<div class="jamaah-voice-listen"><div class="icon">🔊</div><div class="copy">Siaran Tour Leader<small>Audio langsung dari rombongan Anda</small></div></div><audio id="jamaahVoiceAudio" class="jamaah-voice-audio" autoplay playsinline controls></audio><button id="jamaahVoiceEnable" class="jamaah-voice-enable" type="button">🔊 Aktifkan suara</button>';
+      ensureAudio();
+      if(!document.getElementById('jamaahVoiceEnable'))return;
+      if(voiceAudioUnlocked)document.getElementById('jamaahVoiceEnable').textContent='🔊 Suara aktif';
     }else{
-      pill.textContent='● STANDBY';
-      pill.classList.remove('live');
+      pill.textContent='● STANDBY'; pill.classList.remove('live');
       sub.textContent='Memeriksa siaran rombongan...';
       body.innerHTML='<div class="jamaah-voice-idle">Belum ada siaran Tour Leader.</div>';
       audioEl=null;
     }
   }
 
+  async function unlockAudio(){
+    voiceAudioUnlocked=true;
+    const a=ensureAudio();
+    const btn=document.getElementById('jamaahVoiceEnable');
+    if(btn)btn.textContent='🔊 Menunggu audio…';
+    try{
+      if(a){a.muted=false;a.volume=1;await a.play();}
+      if(btn)btn.textContent='🔊 Suara aktif';
+    }catch(e){
+      console.warn('SPIDEST voice audio play:',e.message||e);
+      if(btn)btn.textContent='🔊 Menunggu audio…';
+    }
+  }
+
+  /* Event delegation: tombol tetap bekerja walaupun kartu dibuat ulang saat reconnect. */
+  document.addEventListener('click',e=>{
+    const b=e.target&&e.target.closest&&e.target.closest('#jamaahVoiceEnable');
+    if(b){e.preventDefault();unlockAudio();}
+  },true);
+
   async function send(to,type,payload){
     if(!currentRoom)return;
     await call('voice_send',{room_id:currentRoom.room_id,to_id:to,type,payload:JSON.stringify(payload)});
   }
 
-  function makePC(){
+  function destroyPC(){
+    if(pc){try{pc.ontrack=null;pc.onicecandidate=null;pc.close();}catch(e){}pc=null;}
+  }
+
+  function makePC(room){
     const x=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
     x.ontrack=e=>{
-      if(!audioEl)audioEl=document.getElementById('jamaahVoiceAudio');
-      if(audioEl&&e.streams&&e.streams[0]){
-        audioEl.srcObject=e.streams[0];
-        audioEl.muted=false;
-        audioEl.volume=1;
-        const playNow=()=>audioEl?.play().catch(err=>{
-          console.warn('SPIDEST voice audio play:',err.message||err);
-        });
-        if(voiceAudioUnlocked||audioEl.autoplay)playNow();
+      const a=ensureAudio();
+      if(a&&e.streams&&e.streams[0]){
+        a.srcObject=e.streams[0]; a.muted=false; a.volume=1;
+        a.play().catch(err=>console.warn('SPIDEST voice audio play:',err.message||err));
       }
     };
     x.onicecandidate=e=>{
-      if(e.candidate&&currentRoom)send(currentRoom.leader_id,'ice',e.candidate.toJSON()).catch(()=>{});
+      if(e.candidate&&currentRoom&&String(currentRoom.room_id)===String(room.room_id))send(room.leader_id,'ice',e.candidate.toJSON()).catch(()=>{});
     };
     x.onconnectionstatechange=()=>{
-      if(x.connectionState==='failed'){
-        console.warn('SPIDEST voice: WebRTC connection failed.');
-      }
+      console.log('SPIDEST voice connection:',x.connectionState);
+    };
+    x.oniceconnectionstatechange=()=>{
+      console.log('SPIDEST voice ICE:',x.iceConnectionState);
     };
     x.addTransceiver('audio',{direction:'recvonly'});
     return x;
@@ -6537,14 +6542,18 @@ window.addEventListener("popstate", function(event){
     if(!sig||seenSignals.has(sig.signal_id))return;
     seenSignals.add(sig.signal_id);
     let p;try{p=JSON.parse(sig.payload||'{}')}catch(e){return;}
-    if(!pc)pc=makePC();
+    if(!currentRoom)return;
     if(sig.type==='offer'){
-      await pc.setRemoteDescription(p);
-      const ans=await pc.createAnswer();
-      await pc.setLocalDescription(ans);
-      await send(currentRoom.leader_id,'answer',pc.localDescription.toJSON());
+      if(!pc)pc=makePC(currentRoom);
+      try{
+        await pc.setRemoteDescription(p);
+        const ans=await pc.createAnswer();
+        await pc.setLocalDescription(ans);
+        await send(currentRoom.leader_id,'answer',pc.localDescription.toJSON());
+      }catch(e){console.warn('SPIDEST voice offer:',e.message||e);}
     }else if(sig.type==='ice'){
-      try{await pc.addIceCandidate(p);}catch(e){}
+      if(!pc)pc=makePC(currentRoom);
+      try{await pc.addIceCandidate(p);}catch(e){console.warn('SPIDEST voice ICE candidate:',e.message||e);}
     }
   }
 
@@ -6561,76 +6570,45 @@ window.addEventListener("popstate", function(event){
 
   function closeRoom(){
     if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
-    if(pc){try{pc.close();}catch(e){}pc=null;}
-    if(audioEl){
-      try{audioEl.pause();}catch(e){}
-      try{audioEl.srcObject=null;}catch(e){}
-    }
-    audioEl=null;
-    currentRoom=null;
-    lastRoomId='';
-    seenSignals.clear();
-    setUI(false,null);
+    destroyPC();
+    if(audioEl){try{audioEl.pause();}catch(e){}try{audioEl.srcObject=null;}catch(e){}}
+    audioEl=null; currentRoom=null; lastRoomId=''; seenSignals.clear(); setUI(false,null);
   }
 
   async function join(room){
     if(!room||!room.room_id)return;
-    if(currentRoom&&currentRoom.room_id===room.room_id)return;
+    const rid=String(room.room_id);
+    if(currentRoom&&String(currentRoom.room_id)===rid)return;
     closeRoom();
-    currentRoom=room;
-    lastRoomId=String(room.room_id);
-    setUI(true,room);
-    pc=makePC();
-    try{
-      await send(room.leader_id,'join',{ts:Date.now()});
-    }catch(e){
-      console.warn('SPIDEST voice join:',e.message||e);
-      closeRoom();
-      return;
-    }
-    pollTimer=setInterval(poll,900);
+    currentRoom=room; lastRoomId=rid; setUI(true,room);
+    pc=makePC(room);
+    try{await send(room.leader_id,'join',{ts:Date.now()});}
+    catch(e){console.warn('SPIDEST voice join:',e.message||e);closeRoom();return;}
+    pollTimer=setInterval(poll,700);
     await poll();
   }
 
   async function check(){
-    const section=document.getElementById('jamaahVoiceSection');
-    if(section)section.style.display='block';
-    const t=getJamaahToken();
-    if(!t){
-      setUI(false,null);
-      return;
-    }
+    const section=document.getElementById('jamaahVoiceSection'); if(section)section.style.display='block';
+    const t=getJamaahToken(); if(!t){setUI(false,null);return;}
     try{
       const r=await call('voice_status',{});
       const room=r&&r.data&&r.data.room?r.data.room:null;
-      if(room) await join(room);
-      else if(currentRoom) closeRoom();
+      if(room)await join(room);
+      else if(currentRoom)closeRoom();
       else setUI(false,null);
-      console.log('SPIDEST voice status:',{active:!!room,room_id:room&&room.room_id,group_id:room&&room.group_id});
-    }catch(e){
-      console.warn('SPIDEST voice status:',e.message||e);
-      /* Do not hide the card on API failure. */
-      setUI(false,null);
-    }
+    }catch(e){console.warn('SPIDEST voice status:',e.message||e);}
   }
 
   window.SPIDEStJamaahVoice={start:check,stop:closeRoom};
-
   function boot(){
     if(!document.getElementById('jamaahVoiceCard'))return;
-    setUI(false,null);
-    check();
+    setUI(false,null); check();
     if(statusTimer)clearInterval(statusTimer);
-    statusTimer=setInterval(check,2200);
+    statusTimer=setInterval(check,2500);
   }
-
-  /* Re-check when the Dashboard becomes visible again. */
-  document.addEventListener('visibilitychange',()=>{
-    if(!document.hidden)check();
-  });
-
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);
-  else boot();
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)check();});
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
 })();
 </script>
 </body>
