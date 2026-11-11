@@ -6430,9 +6430,16 @@ window.addEventListener("popstate", function(event){
 <script id="spidest-jamaah-voice-js">
 (function(){
   const API=typeof API_URL!=='undefined'?API_URL:null;
-  const TOKEN_KEY='spidest_unified_token';
+  const TOKEN_KEY='SPIDEST_V3_SESSION';
   let pollTimer=null,statusTimer=null,currentRoom=null,pc=null,seenSignals=new Set(),audioEl=null;
-  function token(){return sessionStorage.getItem(TOKEN_KEY)||'';}
+  function token(){
+    try{
+      const s=JSON.parse(localStorage.getItem(TOKEN_KEY)||'null');
+      return String(s?.token||'').trim();
+    }catch(e){
+      return '';
+    }
+  }
   async function call(action,data){
     if(typeof apiRequest==='function') return apiRequest(action,data);
     if(!API) throw new Error('API URL belum tersedia.');
