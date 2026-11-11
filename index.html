@@ -6435,7 +6435,7 @@ window.addEventListener("popstate", function(event){
      Jamaah is receive-only; no microphone is requested.
   ========================================================== */
   let pollTimer=null,statusTimer=null,currentRoom=null,pc=null,seenSignals=new Set(),audioEl=null;
-  let lastRoomId='';
+  let lastRoomId='',voiceAudioUnlocked=false;
 
   function getJamaahToken(){
     try{
@@ -6472,8 +6472,27 @@ window.addEventListener("popstate", function(event){
       sub.textContent=(room.leader_name||'Tour Leader')+' sedang berbicara';
       body.innerHTML='<div class="jamaah-voice-listen"><div class="icon">🔊</div><div class="copy">Siaran Tour Leader<small>Audio langsung dari rombongan Anda</small></div></div><audio id="jamaahVoiceAudio" class="jamaah-voice-audio" autoplay playsinline controls></audio><button id="jamaahVoiceEnable" class="jamaah-voice-enable">🔊 Aktifkan suara</button>';
       audioEl=document.getElementById('jamaahVoiceAudio');
+      if(audioEl){
+        audioEl.autoplay=true;
+        audioEl.playsInline=true;
+        audioEl.muted=false;
+        audioEl.volume=1;
+      }
       const btn=document.getElementById('jamaahVoiceEnable');
-      if(btn)btn.onclick=()=>audioEl?.play().catch(()=>{});
+      if(btn)btn.onclick=async()=>{
+        voiceAudioUnlocked=true;
+        try{
+          if(audioEl){
+            audioEl.muted=false;
+            audioEl.volume=1;
+            await audioEl.play();
+            btn.textContent='🔊 Suara aktif';
+          }
+        }catch(e){
+          btn.textContent='🔊 Menunggu audio…';
+          console.warn('SPIDEST voice audio:',e.message||e);
+        }
+      };
     }else{
       pill.textContent='● STANDBY';
       pill.classList.remove('live');
@@ -6494,7 +6513,12 @@ window.addEventListener("popstate", function(event){
       if(!audioEl)audioEl=document.getElementById('jamaahVoiceAudio');
       if(audioEl&&e.streams&&e.streams[0]){
         audioEl.srcObject=e.streams[0];
-        audioEl.play().catch(()=>{});
+        audioEl.muted=false;
+        audioEl.volume=1;
+        const playNow=()=>audioEl?.play().catch(err=>{
+          console.warn('SPIDEST voice audio play:',err.message||err);
+        });
+        if(voiceAudioUnlocked||audioEl.autoplay)playNow();
       }
     };
     x.onicecandidate=e=>{
@@ -6538,6 +6562,11 @@ window.addEventListener("popstate", function(event){
   function closeRoom(){
     if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
     if(pc){try{pc.close();}catch(e){}pc=null;}
+    if(audioEl){
+      try{audioEl.pause();}catch(e){}
+      try{audioEl.srcObject=null;}catch(e){}
+    }
+    audioEl=null;
     currentRoom=null;
     lastRoomId='';
     seenSignals.clear();
