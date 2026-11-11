@@ -6429,67 +6429,179 @@ window.addEventListener("popstate", function(event){
 
 <script id="spidest-jamaah-voice-js">
 (function(){
-  const API=typeof API_URL!=='undefined'?API_URL:null;
-  const TOKEN_KEY='SPIDEST_V3_SESSION';
+  /* ==========================================================
+     SPIDEST V3 — JAMAAH ONE-WAY TOUR LEADER VOICE
+     Source of truth for Jamaah session: getSession()/localStorage.
+     Jamaah is receive-only; no microphone is requested.
+  ========================================================== */
   let pollTimer=null,statusTimer=null,currentRoom=null,pc=null,seenSignals=new Set(),audioEl=null;
-  function token(){
+  let lastRoomId='';
+
+  function getJamaahToken(){
     try{
-      const s=JSON.parse(localStorage.getItem(TOKEN_KEY)||'null');
-      return String(s?.token||'').trim();
-    }catch(e){
-      return '';
+      if(typeof getSession==='function'){
+        const s=getSession();
+        return String(s&&s.token||'').trim();
+      }
+      const s=JSON.parse(localStorage.getItem('SPIDEST_V3_SESSION')||'null');
+      return String(s&&s.token||'').trim();
+    }catch(e){ return ''; }
+  }
+
+  async function call(action,data){
+    const t=getJamaahToken();
+    if(!t) throw new Error('Sesi Jamaah belum tersedia.');
+    if(typeof apiRequest==='function') return apiRequest(action,{token:t,...data});
+    throw new Error('API Jamaah belum tersedia.');
+  }
+
+  function setUI(active,room){
+    const section=document.getElementById('jamaahVoiceSection');
+    const card=document.getElementById('jamaahVoiceCard');
+    if(!section||!card)return;
+    section.style.display='block';
+    card.style.display='block';
+    const pill=document.getElementById('jamaahVoicePill');
+    const sub=document.getElementById('jamaahVoiceSub');
+    const body=document.getElementById('jamaahVoiceBody');
+    if(!pill||!sub||!body)return;
+
+    if(active&&room){
+      pill.textContent='● LIVE';
+      pill.classList.add('live');
+      sub.textContent=(room.leader_name||'Tour Leader')+' sedang berbicara';
+      body.innerHTML='<div class="jamaah-voice-listen"><div class="icon">🔊</div><div class="copy">Siaran Tour Leader<small>Audio langsung dari rombongan Anda</small></div></div><audio id="jamaahVoiceAudio" class="jamaah-voice-audio" autoplay playsinline controls></audio><button id="jamaahVoiceEnable" class="jamaah-voice-enable">🔊 Aktifkan suara</button>';
+      audioEl=document.getElementById('jamaahVoiceAudio');
+      const btn=document.getElementById('jamaahVoiceEnable');
+      if(btn)btn.onclick=()=>audioEl?.play().catch(()=>{});
+    }else{
+      pill.textContent='● STANDBY';
+      pill.classList.remove('live');
+      sub.textContent='Memeriksa siaran rombongan...';
+      body.innerHTML='<div class="jamaah-voice-idle">Belum ada siaran Tour Leader.</div>';
+      audioEl=null;
     }
   }
-  async function call(action,data){
-    if(typeof apiRequest==='function') return apiRequest(action,data);
-    if(!API) throw new Error('API URL belum tersedia.');
-    const r=await fetch(API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action,...data})});
-    const j=await r.json(); if(!j.success) throw new Error(j.message||'API gagal'); return j;
+
+  async function send(to,type,payload){
+    if(!currentRoom)return;
+    await call('voice_send',{room_id:currentRoom.room_id,to_id:to,type,payload:JSON.stringify(payload)});
   }
-  function setUI(active,room){
-    const card=document.getElementById('jamaahVoiceCard'); if(!card)return;
-    const pill=document.getElementById('jamaahVoicePill'), sub=document.getElementById('jamaahVoiceSub'), body=document.getElementById('jamaahVoiceBody');
-    if(active&&room){pill.textContent='● LIVE';pill.classList.add('live');sub.textContent=(room.leader_name||'Tour Leader')+' sedang berbicara';
-      body.innerHTML='<div class="jamaah-voice-listen"><div class="icon">🔊</div><div class="copy">Siaran Tour Leader<small>Audio langsung dari rombongan Anda</small></div></div><audio id="jamaahVoiceAudio" class="jamaah-voice-audio" autoplay playsinline controls></audio><button id="jamaahVoiceEnable" class="jamaah-voice-enable">🔊 Aktifkan suara</button>';
-      audioEl=document.getElementById('jamaahVoiceAudio'); document.getElementById('jamaahVoiceEnable').onclick=()=>audioEl?.play().catch(()=>{});
-    }else{pill.textContent='● STANDBY';pill.classList.remove('live');sub.textContent='Memeriksa siaran rombongan...';body.innerHTML='<div class="jamaah-voice-idle">Belum ada siaran Tour Leader.</div>';audioEl=null;}
-  }
-  async function send(to,type,payload){if(!currentRoom)return;await call('voice_send',{token:token(),room_id:currentRoom.room_id,to_id:to,type,payload:JSON.stringify(payload)});}
+
   function makePC(){
     const x=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
-    x.ontrack=e=>{if(!audioEl)audioEl=document.getElementById('jamaahVoiceAudio');if(audioEl&&e.streams[0]){audioEl.srcObject=e.streams[0];audioEl.play().catch(()=>{});}};
-    x.onicecandidate=e=>{if(e.candidate&&currentRoom)send(currentRoom.leader_id,'ice',e.candidate.toJSON()).catch(()=>{});};
-    x.onconnectionstatechange=()=>{if(['failed','closed','disconnected'].includes(x.connectionState)){} };
-    x.addTransceiver('audio',{direction:'recvonly'}); return x;
+    x.ontrack=e=>{
+      if(!audioEl)audioEl=document.getElementById('jamaahVoiceAudio');
+      if(audioEl&&e.streams&&e.streams[0]){
+        audioEl.srcObject=e.streams[0];
+        audioEl.play().catch(()=>{});
+      }
+    };
+    x.onicecandidate=e=>{
+      if(e.candidate&&currentRoom)send(currentRoom.leader_id,'ice',e.candidate.toJSON()).catch(()=>{});
+    };
+    x.onconnectionstatechange=()=>{
+      if(x.connectionState==='failed'){
+        console.warn('SPIDEST voice: WebRTC connection failed.');
+      }
+    };
+    x.addTransceiver('audio',{direction:'recvonly'});
+    return x;
   }
+
   async function handleSignal(sig){
-    if(seenSignals.has(sig.signal_id))return; seenSignals.add(sig.signal_id);
-    let p;try{p=JSON.parse(sig.payload||'{}')}catch(e){return}
+    if(!sig||seenSignals.has(sig.signal_id))return;
+    seenSignals.add(sig.signal_id);
+    let p;try{p=JSON.parse(sig.payload||'{}')}catch(e){return;}
     if(!pc)pc=makePC();
-    if(sig.type==='offer'){await pc.setRemoteDescription(p);const ans=await pc.createAnswer();await pc.setLocalDescription(ans);await send(currentRoom.leader_id,'answer',pc.localDescription.toJSON());}
-    else if(sig.type==='ice'){try{await pc.addIceCandidate(p)}catch(e){}}
-  }
-  async function poll(){
-    if(!currentRoom)return;
-    try{const r=await call('voice_poll',{token:token(),room_id:currentRoom.room_id});for(const sig of (r.data?.signals||[]))await handleSignal(sig);}catch(e){
-      if(/tidak aktif|tidak berada|Siaran tidak aktif/i.test(e.message||'')) closeRoom();
+    if(sig.type==='offer'){
+      await pc.setRemoteDescription(p);
+      const ans=await pc.createAnswer();
+      await pc.setLocalDescription(ans);
+      await send(currentRoom.leader_id,'answer',pc.localDescription.toJSON());
+    }else if(sig.type==='ice'){
+      try{await pc.addIceCandidate(p);}catch(e){}
     }
   }
-  function closeRoom(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}if(pc){try{pc.close()}catch(e){}pc=null;}currentRoom=null;seenSignals.clear();setUI(false,null);}
+
+  async function poll(){
+    if(!currentRoom)return;
+    try{
+      const r=await call('voice_poll',{room_id:currentRoom.room_id});
+      for(const sig of (r.data&&r.data.signals||[]))await handleSignal(sig);
+    }catch(e){
+      console.warn('SPIDEST voice poll:',e.message||e);
+      if(/tidak aktif|tidak berada|Siaran tidak aktif/i.test(e.message||''))closeRoom();
+    }
+  }
+
+  function closeRoom(){
+    if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
+    if(pc){try{pc.close();}catch(e){}pc=null;}
+    currentRoom=null;
+    lastRoomId='';
+    seenSignals.clear();
+    setUI(false,null);
+  }
+
   async function join(room){
+    if(!room||!room.room_id)return;
     if(currentRoom&&currentRoom.room_id===room.room_id)return;
-    closeRoom(); currentRoom=room; setUI(true,room); pc=makePC();
-    await send(room.leader_id,'join',{ts:Date.now()});
-    pollTimer=setInterval(poll,900); await poll();
+    closeRoom();
+    currentRoom=room;
+    lastRoomId=String(room.room_id);
+    setUI(true,room);
+    pc=makePC();
+    try{
+      await send(room.leader_id,'join',{ts:Date.now()});
+    }catch(e){
+      console.warn('SPIDEST voice join:',e.message||e);
+      closeRoom();
+      return;
+    }
+    pollTimer=setInterval(poll,900);
+    await poll();
   }
+
   async function check(){
-    const t=token(); if(!t){closeRoom();return;}
-    try{const r=await call('voice_status',{token:t}); const room=r.data?.room; if(room)await join(room); else if(currentRoom)closeRoom(); else setUI(false,null);}
-    catch(e){console.warn('SPIDEST voice jamaah:',e.message||e);}
+    const section=document.getElementById('jamaahVoiceSection');
+    if(section)section.style.display='block';
+    const t=getJamaahToken();
+    if(!t){
+      setUI(false,null);
+      return;
+    }
+    try{
+      const r=await call('voice_status',{});
+      const room=r&&r.data&&r.data.room?r.data.room:null;
+      if(room) await join(room);
+      else if(currentRoom) closeRoom();
+      else setUI(false,null);
+      console.log('SPIDEST voice status:',{active:!!room,room_id:room&&room.room_id,group_id:room&&room.group_id});
+    }catch(e){
+      console.warn('SPIDEST voice status:',e.message||e);
+      /* Do not hide the card on API failure. */
+      setUI(false,null);
+    }
   }
+
   window.SPIDEStJamaahVoice={start:check,stop:closeRoom};
-  function boot(){if(!document.getElementById('jamaahVoiceCard'))return;check();statusTimer=setInterval(check,2200);}
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
+
+  function boot(){
+    if(!document.getElementById('jamaahVoiceCard'))return;
+    setUI(false,null);
+    check();
+    if(statusTimer)clearInterval(statusTimer);
+    statusTimer=setInterval(check,2200);
+  }
+
+  /* Re-check when the Dashboard becomes visible again. */
+  document.addEventListener('visibilitychange',()=>{
+    if(!document.hidden)check();
+  });
+
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);
+  else boot();
 })();
 </script>
 </body>
