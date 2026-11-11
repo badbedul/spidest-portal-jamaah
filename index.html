@@ -6435,59 +6435,305 @@ window.addEventListener("popstate", function(event){
 
 <script id="spidest-jamaah-voice-js">
 (function(){
-  const API=typeof API_URL!=='undefined'?API_URL:null;
-  const TOKEN_KEY='spidest_unified_token';
-  let pollTimer=null,statusTimer=null,currentRoom=null,pc=null,seenSignals=new Set(),audioEl=null;
-  function token(){return sessionStorage.getItem(TOKEN_KEY)||'';}
+  /* SPIDEST V3 — JAMAAH ONE-WAY TOUR LEADER VOICE (FIXED11 AUDIO + SIGNAL RETRY) */
+  let pollTimer=null,statusTimer=null,currentRoom=null,pc=null,audioEl=null;
+  let seenSignals=new Set(),processingSignals=new Set(),voiceAudioUnlocked=false;
+  let audioContext=null,remoteStream=null,webAudioSource=null,webAudioStream=null,playbackMode='none';
+  let fallbackStream=null,reconnectTimer=null,reconnectAttempts=0,pollBusy=false,statusBusy=false;
+  let debugLines=[];
+
+  function getJamaahToken(){
+    try{
+      if(typeof getSession==='function'){
+        const ss=getSession();return String(ss&&ss.token||'').trim();
+      }
+      const ss=JSON.parse(localStorage.getItem('SPIDEST_V3_SESSION')||'null');
+      return String(ss&&ss.token||'').trim();
+    }catch(e){return '';}
+  }
   async function call(action,data){
-    if(typeof apiRequest==='function') return apiRequest(action,data);
-    if(!API) throw new Error('API URL belum tersedia.');
-    const r=await fetch(API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action,...data})});
-    const j=await r.json(); if(!j.success) throw new Error(j.message||'API gagal'); return j;
+    const t=getJamaahToken();
+    if(!t)throw new Error('Sesi Jamaah belum tersedia.');
+    if(typeof apiRequest==='function')return apiRequest(action,{token:t,...data});
+    throw new Error('API Jamaah belum tersedia.');
+  }
+  function voiceGetIceConfiguration(){
+    let extra=[];
+    try{
+      if(Array.isArray(window.SPIDEST_VOICE_TURN_SERVERS))extra=window.SPIDEST_VOICE_TURN_SERVERS;
+      else if(window.parent&&Array.isArray(window.parent.SPIDEST_VOICE_TURN_SERVERS))extra=window.parent.SPIDEST_VOICE_TURN_SERVERS;
+    }catch(e){}
+    return {iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'},...extra],iceCandidatePoolSize:8};
+  }
+  function ensureAudio(){
+    const body=document.getElementById('jamaahVoiceBody');if(!body)return null;
+    let a=document.getElementById('jamaahVoiceAudio');
+    if(!a){a=document.createElement('audio');a.id='jamaahVoiceAudio';a.className='jamaah-voice-audio';a.autoplay=true;a.playsInline=true;a.controls=true;body.appendChild(a);}
+    audioEl=a;a.autoplay=true;a.playsInline=true;a.volume=1;
+    return a;
+  }
+  function setVoiceButton(text){const b=document.getElementById('jamaahVoiceEnable');if(b)b.textContent=text;}
+  function renderDebug(){
+    const el=document.getElementById('jamaahVoiceDebug');
+    if(el)el.textContent='VOICE DEBUG\n'+(debugLines.length?debugLines.join('\n'):'menunggu koneksi…');
+  }
+  function voiceDebug(msg){
+    const line=new Date().toLocaleTimeString()+'  '+String(msg);
+    debugLines.push(line);if(debugLines.length>10)debugLines.shift();
+    renderDebug();console.log('SPIDEST VOICE JAMAAH DEBUG:',line);
   }
   function setUI(active,room){
-    const card=document.getElementById('jamaahVoiceCard'); if(!card)return;
-    const pill=document.getElementById('jamaahVoicePill'), sub=document.getElementById('jamaahVoiceSub'), body=document.getElementById('jamaahVoiceBody');
-    if(active&&room){pill.textContent='● LIVE';pill.classList.add('live');sub.textContent=(room.leader_name||'Tour Leader')+' sedang berbicara';
-      body.innerHTML='<div class="jamaah-voice-listen"><div class="icon">🔊</div><div class="copy">Siaran Tour Leader<small>Audio langsung dari rombongan Anda</small></div></div><audio id="jamaahVoiceAudio" class="jamaah-voice-audio" autoplay playsinline controls></audio><button id="jamaahVoiceEnable" class="jamaah-voice-enable">🔊 Aktifkan suara</button>';
-      audioEl=document.getElementById('jamaahVoiceAudio'); document.getElementById('jamaahVoiceEnable').onclick=()=>audioEl?.play().catch(()=>{});
-    }else{pill.textContent='● STANDBY';pill.classList.remove('live');sub.textContent='Memeriksa siaran rombongan...';body.innerHTML='<div class="jamaah-voice-idle">Belum ada siaran Tour Leader.</div>';audioEl=null;}
-  }
-  async function send(to,type,payload){if(!currentRoom)return;await call('voice_send',{token:token(),room_id:currentRoom.room_id,to_id:to,type,payload:JSON.stringify(payload)});}
-  function makePC(){
-    const x=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
-    x.ontrack=e=>{if(!audioEl)audioEl=document.getElementById('jamaahVoiceAudio');if(audioEl&&e.streams[0]){audioEl.srcObject=e.streams[0];audioEl.play().catch(()=>{});}};
-    x.onicecandidate=e=>{if(e.candidate&&currentRoom)send(currentRoom.leader_id,'ice',e.candidate.toJSON()).catch(()=>{});};
-    x.onconnectionstatechange=()=>{if(['failed','closed','disconnected'].includes(x.connectionState)){} };
-    x.addTransceiver('audio',{direction:'recvonly'}); return x;
-  }
-  async function handleSignal(sig){
-    if(seenSignals.has(sig.signal_id))return; seenSignals.add(sig.signal_id);
-    let p;try{p=JSON.parse(sig.payload||'{}')}catch(e){return}
-    if(!pc)pc=makePC();
-    if(sig.type==='offer'){await pc.setRemoteDescription(p);const ans=await pc.createAnswer();await pc.setLocalDescription(ans);await send(currentRoom.leader_id,'answer',pc.localDescription.toJSON());}
-    else if(sig.type==='ice'){try{await pc.addIceCandidate(p)}catch(e){}}
-  }
-  async function poll(){
-    if(!currentRoom)return;
-    try{const r=await call('voice_poll',{token:token(),room_id:currentRoom.room_id});for(const sig of (r.data?.signals||[]))await handleSignal(sig);}catch(e){
-      if(/tidak aktif|tidak berada|Siaran tidak aktif/i.test(e.message||'')) closeRoom();
+    const section=document.getElementById('jamaahVoiceSection');
+    const card=document.getElementById('jamaahVoiceCard');
+    if(!section||!card)return;
+    section.style.display='block';card.style.display='block';
+    const pill=document.getElementById('jamaahVoicePill'),sub=document.getElementById('jamaahVoiceSub'),body=document.getElementById('jamaahVoiceBody');
+    if(!pill||!sub||!body)return;
+    if(active&&room){
+      pill.textContent='● LIVE';pill.classList.add('live');
+      sub.textContent=(room.leader_name||'Tour Leader')+' sedang berbicara';
+      body.innerHTML='<div class="jamaah-voice-listen"><div class="icon">🔊</div><div class="copy">Siaran Tour Leader<small>Audio langsung dari rombongan Anda</small></div></div><audio id="jamaahVoiceAudio" class="jamaah-voice-audio" autoplay playsinline controls></audio><button id="jamaahVoiceEnable" class="jamaah-voice-enable" type="button">'+(voiceAudioUnlocked?'🔊 Menghubungkan suara…':'🔊 Aktifkan suara')+'</button><div id="jamaahVoiceDebug" class="jamaah-voice-debug" aria-live="polite"></div>';
+      ensureAudio();renderDebug();
+    }else{
+      pill.textContent='● STANDBY';pill.classList.remove('live');
+      sub.textContent='Memeriksa siaran rombongan...';
+      body.innerHTML='<div class="jamaah-voice-idle">Belum ada siaran Tour Leader.</div>';
+      audioEl=null;
     }
   }
-  function closeRoom(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}if(pc){try{pc.close()}catch(e){}pc=null;}currentRoom=null;seenSignals.clear();setUI(false,null);}
+  function disconnectWebAudio(){
+    if(webAudioSource){try{webAudioSource.disconnect();}catch(e){}webAudioSource=null;}
+    webAudioStream=null;
+    if(playbackMode==='webaudio')playbackMode='none';
+  }
+  async function connectWebAudio(stream){
+    const a=ensureAudio();
+    if(!stream||!audioContext||audioContext.state!=='running')return false;
+    try{
+      if(webAudioSource&&webAudioStream===stream){setVoiceButton('🔊 Suara aktif');return true;}
+      disconnectWebAudio();
+      webAudioSource=audioContext.createMediaStreamSource(stream);
+      webAudioSource.connect(audioContext.destination);
+      webAudioStream=stream;playbackMode='webaudio';
+      if(a){try{a.pause();}catch(e){}a.srcObject=null;a.muted=true;a.controls=false;}
+      setVoiceButton('🔊 Suara aktif');
+      voiceDebug('AUDIO ROUTE WEB AUDIO ✓ · context '+audioContext.state);
+      return true;
+    }catch(e){voiceDebug('WEB AUDIO GAGAL: '+(e.message||e));return false;}
+  }
+  async function playNativeAudio(stream){
+    const a=ensureAudio();if(!a||!stream)return false;
+    try{
+      a.srcObject=stream;a.muted=false;a.volume=1;a.controls=true;
+      const p=a.play();
+      if(p&&typeof p.then==='function')await p;
+      disconnectWebAudio();playbackMode='element';
+      setVoiceButton('🔊 Suara aktif');voiceDebug('AUDIO ELEMENT PLAY ✓');
+      return true;
+    }catch(e){
+      voiceDebug('AUDIO ELEMENT PLAY DITOLAK: '+(e.message||e));
+      if(audioContext&&audioContext.state==='running')return await connectWebAudio(stream);
+      setVoiceButton('🔊 Aktifkan suara');
+      return false;
+    }
+  }
+  async function attachRemoteTrack(event){
+    const a=ensureAudio();
+    if(!a){voiceDebug('AUDIO ELEMENT BELUM TERSEDIA');return;}
+    let stream=(event.streams&&event.streams[0])||null;
+    if(!stream){
+      if(!fallbackStream)fallbackStream=new MediaStream();
+      if(event.track&&!fallbackStream.getTracks().some(t=>t.id===event.track.id))fallbackStream.addTrack(event.track);
+      stream=fallbackStream;
+    }
+    remoteStream=stream;a.srcObject=stream;a.muted=false;a.volume=1;
+    voiceDebug('TRACK RECEIVED ✓ · tracks='+stream.getAudioTracks().length+' · state='+(event.track&&event.track.readyState));
+    if(event.track){
+      event.track.onmute=()=>voiceDebug('REMOTE TRACK MUTED');
+      event.track.onunmute=()=>voiceDebug('REMOTE TRACK UNMUTED');
+      event.track.onended=()=>voiceDebug('REMOTE TRACK ENDED');
+    }
+    if(voiceAudioUnlocked){
+      const played=await playNativeAudio(stream);
+      if(!played&&audioContext&&audioContext.state==='running')await connectWebAudio(stream);
+    }else{
+      const played=await playNativeAudio(stream);
+      if(!played)setVoiceButton('🔊 Aktifkan suara');
+    }
+  }
+  async function unlockAudio(){
+    voiceAudioUnlocked=true;
+    const a=ensureAudio();
+    setVoiceButton('🔊 Mengaktifkan…');
+    try{
+      const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+      let resumePromise=null;
+      if(AudioContextClass){
+        if(!audioContext||audioContext.state==='closed')audioContext=new AudioContextClass();
+        if(audioContext.state!=='running')resumePromise=audioContext.resume();
+      }
+      // Panggil play() selagi klik pengguna masih menjadi gesture aktif.
+      let playPromise=null;
+      if(remoteStream&&a){a.srcObject=remoteStream;a.muted=false;a.volume=1;try{playPromise=a.play();}catch(e){playPromise=Promise.reject(e);}}
+      if(resumePromise){
+        try{await resumePromise;voiceDebug('AUDIO CONTEXT '+audioContext.state);}
+        catch(e){voiceDebug('AUDIO CONTEXT RESUME DITOLAK: '+(e.message||e));}
+      }
+      if(playPromise){
+        try{await playPromise;disconnectWebAudio();playbackMode='element';setVoiceButton('🔊 Suara aktif');voiceDebug('AUDIO UNLOCK ✓ · element · context '+(audioContext&&audioContext.state||'unsupported'));return;}
+        catch(e){voiceDebug('PLAY GESTURE DITOLAK: '+(e.message||e));}
+      }
+      if(remoteStream&&audioContext&&audioContext.state==='running'){
+        if(await connectWebAudio(remoteStream))return;
+      }
+      if(remoteStream){setVoiceButton('🔊 Coba aktifkan suara lagi');voiceDebug('Audio track ada, tetapi output belum aktif.');}
+      else{setVoiceButton('🔊 Menunggu audio…');voiceDebug('Audio diizinkan · menunggu track WebRTC.');}
+    }catch(e){
+      setVoiceButton('🔊 Aktifkan suara');voiceDebug('UNLOCK ERROR: '+(e.message||e));
+    }
+  }
+  document.addEventListener('click',e=>{
+    const b=e.target&&e.target.closest&&e.target.closest('#jamaahVoiceEnable');
+    if(b){e.preventDefault();unlockAudio();}
+  },true);
+  async function send(to,type,payload){
+    if(!currentRoom)return;
+    await call('voice_send',{room_id:currentRoom.room_id,to_id:to,type,payload:JSON.stringify(payload)});
+  }
+  function destroyPC(){
+    if(pc){const old=pc;pc=null;try{old.ontrack=null;old.onicecandidate=null;old.onconnectionstatechange=null;old.oniceconnectionstatechange=null;old.onicegatheringstatechange=null;old.onicecandidateerror=null;old.onsignalingstatechange=null;old.close();}catch(e){}}
+  }
+  function scheduleReconnect(room,reason){
+    if(reconnectTimer||!currentRoom||String(currentRoom.room_id)!==String(room.room_id))return;
+    if(reconnectAttempts>=5){voiceDebug('RECONNECT BERHENTI setelah 5 percobaan. Periksa jaringan/TURN.');setVoiceButton('🔊 Koneksi gagal · coba muat ulang');return;}
+    reconnectAttempts++;
+    const delay=Math.min(8000,900*Math.pow(2,reconnectAttempts-1));
+    voiceDebug('RECONNECT '+reconnectAttempts+'/5 dalam '+delay+' ms · '+reason);
+    reconnectTimer=setTimeout(async()=>{
+      reconnectTimer=null;
+      if(!currentRoom||String(currentRoom.room_id)!==String(room.room_id))return;
+      destroyPC();
+      try{
+        pc=makePC(currentRoom);
+        await send(currentRoom.leader_id,'join',{ts:Date.now(),retry:reconnectAttempts});
+        voiceDebug('JOIN ULANG terkirim');
+        await poll();
+      }catch(e){voiceDebug('JOIN ULANG GAGAL: '+(e.message||e));scheduleReconnect(room,'retry failed');}
+    },delay);
+  }
+  function makePC(room){
+    const x=new RTCPeerConnection(voiceGetIceConfiguration());
+    voiceDebug('PC dibuat · room '+String(room.room_id).slice(0,8));
+    x.ontrack=e=>{attachRemoteTrack(e).catch(err=>voiceDebug('ONTRACK ERROR: '+(err.message||err)));};
+    x.onicecandidate=e=>{
+      if(e.candidate&&currentRoom&&String(currentRoom.room_id)===String(room.room_id))send(room.leader_id,'ice',e.candidate.toJSON()).catch(err=>voiceDebug('ICE KIRIM GAGAL: '+(err.message||err)));
+    };
+    x.onconnectionstatechange=()=>{
+      voiceDebug('PEER '+x.connectionState+' · ICE '+x.iceConnectionState+' · signaling '+x.signalingState);
+      if(x.connectionState==='connected')reconnectAttempts=0;
+      if(x.connectionState==='failed'&&currentRoom&&String(currentRoom.room_id)===String(room.room_id))scheduleReconnect(room,'peer failed');
+    };
+    x.oniceconnectionstatechange=()=>{
+      voiceDebug('ICE '+x.iceConnectionState+' · peer '+x.connectionState);
+      if(x.iceConnectionState==='connected'||x.iceConnectionState==='completed')reconnectAttempts=0;
+      if(x.iceConnectionState==='failed'&&currentRoom&&String(currentRoom.room_id)===String(room.room_id))scheduleReconnect(room,'ICE failed');
+    };
+    x.onicegatheringstatechange=()=>voiceDebug('ICE GATHERING '+x.iceGatheringState);
+    x.onsignalingstatechange=()=>voiceDebug('SIGNALING '+x.signalingState);
+    x.onicecandidateerror=e=>voiceDebug('ICE ERROR '+(e.errorText||e.errorCode||'unknown'));
+    x.addTransceiver('audio',{direction:'recvonly'});
+    return x;
+  }
+  async function handleSignal(sig){
+    const signalId=String(sig&&sig.signal_id||'');
+    if(!signalId||seenSignals.has(signalId)||processingSignals.has(signalId))return;
+    processingSignals.add(signalId);
+    try{
+      let p;try{p=JSON.parse(sig.payload||'{}');}catch(e){seenSignals.add(signalId);voiceDebug('Payload '+sig.type+' rusak');return;}
+      if(!currentRoom)return;
+      voiceDebug('SIGNAL '+sig.type+' ← '+String(sig.from_id||'').slice(0,16));
+      if(sig.type==='offer'){
+        if(!pc||pc.signalingState==='closed'){destroyPC();pc=makePC(currentRoom);}
+        await pc.setRemoteDescription(p);
+        const queued=pc.__spidestIceQueue||[];pc.__spidestIceQueue=[];
+        for(const c of queued){try{await pc.addIceCandidate(c);}catch(e){voiceDebug('ICE QUEUE ERROR: '+(e.message||e));}}
+        const ans=await pc.createAnswer();
+        await pc.setLocalDescription(ans);
+        await send(currentRoom.leader_id,'answer',pc.localDescription.toJSON?pc.localDescription.toJSON():pc.localDescription);
+        voiceDebug('ANSWER SENT ✓');
+      }else if(sig.type==='ice'){
+        if(!pc||pc.signalingState==='closed'){pc=makePC(currentRoom);}
+        if(pc.remoteDescription&&pc.remoteDescription.type){await pc.addIceCandidate(p);}
+        else{(pc.__spidestIceQueue||(pc.__spidestIceQueue=[])).push(p);voiceDebug('ICE QUEUED');}
+      }else if(sig.type==='leave'){
+        voiceDebug('LEADER mengakhiri siaran');closeRoom();return;
+      }
+      seenSignals.add(signalId);
+    }catch(e){
+      voiceDebug('SIGNAL '+sig.type+' GAGAL; akan dicoba ulang: '+(e.message||e));
+    }finally{processingSignals.delete(signalId);}
+  }
+  async function poll(){
+    if(!currentRoom||pollBusy)return;
+    pollBusy=true;
+    try{
+      const r=await call('voice_poll',{room_id:currentRoom.room_id});
+      for(const sig of (r.data&&r.data.signals||[]))await handleSignal(sig);
+    }catch(e){
+      voiceDebug('POLL ERROR: '+(e.message||e));
+      if(/tidak aktif|tidak berada|Siaran tidak aktif/i.test(e.message||''))closeRoom();
+    }finally{
+      pollBusy=false;
+      if(currentRoom)pollTimer=setTimeout(poll,900);
+    }
+  }
+  function clearPlayback(){
+    disconnectWebAudio();remoteStream=null;fallbackStream=null;playbackMode='none';
+    if(audioEl){try{audioEl.pause();}catch(e){}try{audioEl.srcObject=null;audioEl.muted=false;audioEl.controls=true;}catch(e){}}
+    audioEl=null;
+  }
+  function closeRoom(){
+    if(pollTimer){clearTimeout(pollTimer);pollTimer=null;}
+    if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}
+    destroyPC();clearPlayback();
+    currentRoom=null;seenSignals.clear();processingSignals.clear();pollBusy=false;reconnectAttempts=0;
+    setUI(false,null);
+  }
   async function join(room){
-    if(currentRoom&&currentRoom.room_id===room.room_id)return;
-    closeRoom(); currentRoom=room; setUI(true,room); pc=makePC();
-    await send(room.leader_id,'join',{ts:Date.now()});
-    pollTimer=setInterval(poll,900); await poll();
+    if(!room||!room.room_id)return;
+    const rid=String(room.room_id);
+    if(currentRoom&&String(currentRoom.room_id)===rid&&pc&&pc.signalingState!=='closed')return;
+    if(currentRoom&&String(currentRoom.room_id)!==rid)closeRoom();
+    if(!currentRoom){currentRoom=room;seenSignals=new Set();processingSignals=new Set();debugLines=[];reconnectAttempts=0;setUI(true,room);}
+    voiceDebug('ROOM '+rid+' · leader '+String(room.leader_id||'').slice(0,18));
+    if(!pc)pc=makePC(room);
+    try{
+      await send(room.leader_id,'join',{ts:Date.now()});
+      voiceDebug('JOIN terkirim ke Tour Leader');
+      await poll();
+    }catch(e){voiceDebug('JOIN ERROR: '+(e.message||e));scheduleReconnect(room,'join error');}
   }
   async function check(){
-    const t=token(); if(!t){closeRoom();return;}
-    try{const r=await call('voice_status',{token:t}); const room=r.data?.room; if(room)await join(room); else if(currentRoom)closeRoom(); else setUI(false,null);}
-    catch(e){console.warn('SPIDEST voice jamaah:',e.message||e);}
+    const section=document.getElementById('jamaahVoiceSection');if(section)section.style.display='block';
+    const t=getJamaahToken();if(!t){setUI(false,null);return;}
+    if(statusBusy)return;statusBusy=true;
+    try{
+      const r=await call('voice_status',{});
+      const room=r&&r.data&&r.data.room?r.data.room:null;
+      if(room)await join(room);
+      else if(currentRoom)closeRoom();
+      else setUI(false,null);
+    }catch(e){voiceDebug('STATUS ERROR: '+(e.message||e));}
+    finally{statusBusy=false;}
   }
-  window.SPIDEStJamaahVoice={start:check,stop:closeRoom};
-  function boot(){if(!document.getElementById('jamaahVoiceCard'))return;check();statusTimer=setInterval(check,2200);}
+  window.SPIDEStJamaahVoice={start:check,stop:closeRoom,unlock:unlockAudio};
+  function boot(){
+    if(!document.getElementById('jamaahVoiceCard'))return;
+    setUI(false,null);check();
+    if(statusTimer)clearInterval(statusTimer);
+    statusTimer=setInterval(check,3000);
+  }
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)check();});
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
 })();
 </script>
