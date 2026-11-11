@@ -3454,6 +3454,10 @@ body{background:var(--sp-bg)!important;color:#101010!important;font-family:Inter
           <div class="profile-accommodation-label">Kamar</div>
           <div id="profileRoom" class="profile-accommodation-value">Belum ditentukan</div>
         </div>
+        <div class="profile-accommodation-item">
+          <div class="profile-accommodation-label">Nomor Bus</div>
+          <div id="profileBus" class="profile-accommodation-value">Belum ditentukan</div>
+        </div>
       </div>
       <div class="profile-account-line">
         <span>Portal Jamaah SPIDEST</span>
@@ -4119,10 +4123,13 @@ async function loadProfilePhoto(token) {
 function renderAccommodation(data) {
   const hotel = String(data && data.nama_hotel || "").trim();
   const room = String(data && data.nomor_kamar || "").trim();
+  const bus = String(data && (data.nomor_bus || data.bus) || "").trim();
   const hotelEl = $("profileHotel");
   const roomEl = $("profileRoom");
+  const busEl = $("profileBus");
   if (hotelEl) hotelEl.textContent = hotel || "Belum ditentukan";
   if (roomEl) roomEl.textContent = room || "Belum ditentukan";
+  if (busEl) busEl.textContent = bus || "Belum ditentukan";
 }
 
 /* ==========================================================
