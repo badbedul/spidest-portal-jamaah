@@ -6530,6 +6530,9 @@ window.addEventListener("popstate", function(event){
     };
     x.onconnectionstatechange=()=>{
       console.log('SPIDEST voice connection:',x.connectionState);
+      if((x.connectionState==='failed'||x.connectionState==='closed')&&currentRoom&&String(currentRoom.room_id)===String(room.room_id)){
+        setTimeout(()=>{if(currentRoom&&String(currentRoom.room_id)===String(room.room_id))join(currentRoom).catch(()=>{});},500);
+      }
     };
     x.oniceconnectionstatechange=()=>{
       console.log('SPIDEST voice ICE:',x.iceConnectionState);
@@ -6547,13 +6550,22 @@ window.addEventListener("popstate", function(event){
       if(!pc)pc=makePC(currentRoom);
       try{
         await pc.setRemoteDescription(p);
+        const queued=pc.__spidestIceQueue||[];
+        pc.__spidestIceQueue=[];
+        for(const c of queued){try{await pc.addIceCandidate(c);}catch(e){console.warn('SPIDEST voice queued ICE:',e.message||e);}}
         const ans=await pc.createAnswer();
         await pc.setLocalDescription(ans);
         await send(currentRoom.leader_id,'answer',pc.localDescription.toJSON());
       }catch(e){console.warn('SPIDEST voice offer:',e.message||e);}
     }else if(sig.type==='ice'){
       if(!pc)pc=makePC(currentRoom);
-      try{await pc.addIceCandidate(p);}catch(e){console.warn('SPIDEST voice ICE candidate:',e.message||e);}
+      try{
+        if(pc.remoteDescription&&pc.remoteDescription.type){
+          await pc.addIceCandidate(p);
+        }else{
+          (pc.__spidestIceQueue||(pc.__spidestIceQueue=[])).push(p);
+        }
+      }catch(e){console.warn('SPIDEST voice ICE candidate:',e.message||e);}
     }
   }
 
