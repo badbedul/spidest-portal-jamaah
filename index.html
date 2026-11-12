@@ -3588,6 +3588,23 @@ body{background:var(--sp-bg)!important;color:#101010!important;font-family:Inter
       </div>
       <div id="documentsData"><div class="empty">Belum ada dokumen.</div></div>
     </div>
+      <!-- Penampil dokumen tetap berada di halaman Dokumen; tidak membuka tab/halaman baru. -->
+      <div id="spidestDocumentViewer" class="spidest-document-viewer hidden" aria-hidden="true">
+        <div class="spidest-document-viewer-panel" role="dialog" aria-modal="true" aria-labelledby="spidestDocumentViewerTitle">
+          <div class="spidest-document-viewer-head">
+            <div class="spidest-document-viewer-heading">
+              <div class="spidest-document-viewer-kicker">DOKUMEN JAMAAH</div>
+              <h2 id="spidestDocumentViewerTitle">Dokumen</h2>
+            </div>
+            <button id="spidestDocumentViewerClose" class="spidest-document-viewer-close" type="button" aria-label="Tutup dokumen">×</button>
+          </div>
+          <div class="spidest-document-viewer-stage">
+            <iframe id="spidestDocumentViewerFrame" class="hidden" title="Pratinjau dokumen" allow="fullscreen" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+            <img id="spidestDocumentViewerImage" class="hidden" alt="Pratinjau dokumen jamaah">
+            <div id="spidestDocumentViewerFallback" class="hidden">Pratinjau dokumen tidak dapat ditampilkan.</div>
+          </div>
+        </div>
+      </div>
   </div>
 </section>
 
@@ -3674,6 +3691,55 @@ body{background:var(--sp-bg)!important;color:#101010!important;font-family:Inter
   #documentsPage .document-preview{height:230px;}
   #documentsPage .document-view-head{padding:14px 14px 11px;}
   #documentsPage .document-view-footer{padding:11px 14px 14px;}
+}
+</style>
+<style id="spidest-requested-mobile-bus-inline-document-fix">
+/* FIX TERBATAS: Nomor Bus di layar kecil dan viewer di dalam halaman Dokumen. */
+@media (max-width: 760px){
+  #dashboardPage .profile-accommodation{grid-template-columns:repeat(2,minmax(0,1fr))!important;}
+  #dashboardPage .profile-accommodation-item:nth-child(2){border-right:0!important;}
+  #dashboardPage .profile-accommodation-item:nth-child(3){
+    grid-column:1 / -1!important;flex-direction:row!important;align-items:center!important;
+    justify-content:space-between!important;border-right:0!important;
+    border-top:1px solid rgba(255,255,255,.10)!important;padding:13px 12px!important;
+  }
+  #dashboardPage .profile-accommodation-item:nth-child(3) .profile-accommodation-label{font-size:9px!important;}
+  #dashboardPage .profile-accommodation-item:nth-child(3) .profile-accommodation-value{text-align:right!important;font-size:13px!important;}
+}
+#documentsPage .spidest-document-viewer{
+  position:fixed;inset:0;z-index:10050;display:flex;align-items:center;justify-content:center;
+  padding:clamp(8px,2vw,24px);background:rgba(9,9,10,.82);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+}
+#documentsPage .spidest-document-viewer.hidden{display:none!important;}
+#documentsPage .spidest-document-viewer-panel{
+  display:flex;flex-direction:column;width:min(1100px,100%);height:min(92vh,940px);height:min(92dvh,940px);
+  overflow:hidden;border:1px solid rgba(255,255,255,.18);border-radius:22px;background:#171719;
+  box-shadow:0 28px 90px rgba(0,0,0,.42);
+}
+#documentsPage .spidest-document-viewer-head{
+  flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:13px 16px;background:#111113;border-bottom:1px solid rgba(255,255,255,.10);
+}
+#documentsPage .spidest-document-viewer-heading{min-width:0;}
+#documentsPage .spidest-document-viewer-kicker{font-size:9px;font-weight:900;letter-spacing:.18em;color:#e4b6a0;}
+#documentsPage #spidestDocumentViewerTitle{margin:4px 0 0;color:#fff;font-size:16px;font-weight:850;overflow-wrap:anywhere;}
+#documentsPage .spidest-document-viewer-close{
+  flex:0 0 42px;width:42px;height:42px;border:1px solid rgba(255,255,255,.17);border-radius:13px;
+  background:#29292d;color:#fff;font-size:28px;line-height:1;cursor:pointer;
+}
+#documentsPage .spidest-document-viewer-stage{
+  position:relative;display:flex;align-items:center;justify-content:center;flex:1 1 auto;min-height:0;
+  overflow:hidden;background:#303034;
+}
+#documentsPage #spidestDocumentViewerFrame{width:100%;height:100%;border:0;background:#fff;}
+#documentsPage #spidestDocumentViewerImage{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;background:#fff;}
+#documentsPage #spidestDocumentViewerFallback{padding:24px;color:#fff;text-align:center;font-size:13px;}
+@media(max-width:600px){
+  #documentsPage .spidest-document-viewer{padding:0;background:#111113;backdrop-filter:none;-webkit-backdrop-filter:none;}
+  #documentsPage .spidest-document-viewer-panel{width:100%;height:100%;height:100dvh;max-height:none;border:0;border-radius:0;}
+  #documentsPage .spidest-document-viewer-head{padding:calc(10px + env(safe-area-inset-top)) 13px 11px;}
+  #documentsPage .spidest-document-viewer-stage{padding-bottom:env(safe-area-inset-bottom);}
 }
 </style>
 <script>
@@ -4165,9 +4231,42 @@ async function loadProfilePhoto(token) {
    ========================================================== */
 
 function renderAccommodation(data) {
-  const hotel = String(data && data.nama_hotel || "").trim();
-  const room = String(data && data.nomor_kamar || "").trim();
-  const bus = String(data && data.nomor_bus || "").trim();
+  // Respons roomlist dapat berupa satu objek, array, atau objek data bersarang.
+  // Cari nilai pertama yang benar-benar terisi tanpa mengubah sumber/API lain.
+  function pickRecord(value) {
+    if (Array.isArray(value)) {
+      const session = getSession() || {};
+      const jamaahId = String(session.jamaah_id || "").trim();
+      return value.find(function(row) {
+        return jamaahId && String(row && row.jamaah_id || "").trim() === jamaahId;
+      }) || value[0] || {};
+    }
+    if (value && typeof value === "object") {
+      if (value.data && typeof value.data === "object") return pickRecord(value.data);
+      if (value.roomlist && typeof value.roomlist === "object") return pickRecord(value.roomlist);
+      if (value.accommodation && typeof value.accommodation === "object") return pickRecord(value.accommodation);
+      return value;
+    }
+    return {};
+  }
+  const sources = [pickRecord(data && data.roomlist),pickRecord(data && data.profile),pickRecord(data && data.session),pickRecord(data)];
+  function readFirst(keys) {
+    for (const source of sources) {
+      if (!source || typeof source !== "object") continue;
+      const normalized = Object.keys(source).reduce(function(map,key) {
+        map[String(key).toLowerCase().replace(/[^a-z0-9]/g,"")] = source[key];
+        return map;
+      },{});
+      for (const key of keys) {
+        const value = normalized[String(key).toLowerCase().replace(/[^a-z0-9]/g,"")];
+        if (value !== undefined && value !== null && String(value).trim() !== "") return String(value).trim();
+      }
+    }
+    return "";
+  }
+  const hotel = readFirst(["nama_hotel","hotel"]);
+  const room = readFirst(["nomor_kamar","kamar","room_number"]);
+  const bus = readFirst(["nomor_bus","no_bus","bus_number","nomorBus","bus"]);
   const hotelEl = $("profileHotel");
   const roomEl = $("profileRoom");
   const busEl = $("profileBus");
@@ -4344,59 +4443,119 @@ function dateOnlyToUtc(value) {
    DOKUMEN
    ========================================================== */
 
+function openSPIDESTDocumentViewer(title, url, kind) {
+  const viewer = $("spidestDocumentViewer");
+  const frame = $("spidestDocumentViewerFrame");
+  const image = $("spidestDocumentViewerImage");
+  const fallback = $("spidestDocumentViewerFallback");
+  const titleEl = $("spidestDocumentViewerTitle");
+  if (!viewer || !url) return;
+
+  titleEl.textContent = title || "Dokumen Jamaah";
+  frame.classList.add("hidden");
+  image.classList.add("hidden");
+  fallback.classList.add("hidden");
+  frame.removeAttribute("src");
+  image.removeAttribute("src");
+
+  if (String(kind || "").toLowerCase() === "image") {
+    image.onload = function() {
+      image.classList.remove("hidden");
+      fallback.classList.add("hidden");
+    };
+    image.onerror = function() {
+      image.classList.add("hidden");
+      fallback.classList.remove("hidden");
+      fallback.textContent = "Foto/dokumen tidak dapat ditampilkan.";
+    };
+    image.src = url;
+  } else {
+    frame.classList.remove("hidden");
+    frame.src = url;
+  }
+
+  viewer.classList.remove("hidden");
+  viewer.setAttribute("aria-hidden", "false");
+  document.documentElement.style.overflow = "hidden";
+}
+
+function closeSPIDESTDocumentViewer() {
+  const viewer = $("spidestDocumentViewer");
+  const frame = $("spidestDocumentViewerFrame");
+  const image = $("spidestDocumentViewerImage");
+  if (!viewer) return;
+  viewer.classList.add("hidden");
+  viewer.setAttribute("aria-hidden", "true");
+  if (frame) {
+    frame.removeAttribute("src");
+    frame.classList.add("hidden");
+  }
+  if (image) {
+    image.removeAttribute("src");
+    image.classList.add("hidden");
+  }
+  document.documentElement.style.overflow = "";
+}
+
+function setupSPIDESTDocumentViewer() {
+  const viewer = $("spidestDocumentViewer");
+  const closeBtn = $("spidestDocumentViewerClose");
+  if (!viewer || viewer.dataset.bound === "1") return;
+  viewer.dataset.bound = "1";
+  if (closeBtn) closeBtn.addEventListener("click", closeSPIDESTDocumentViewer);
+  viewer.addEventListener("click", function(event) {
+    if (event.target === viewer) closeSPIDESTDocumentViewer();
+  });
+  document.addEventListener("keydown", function(event) {
+    if (event.key === "Escape" && !viewer.classList.contains("hidden")) closeSPIDESTDocumentViewer();
+  });
+}
+
 function renderDocuments(items) {
   const target = $("documentsData");
-
+  if (!target) return;
   if (!Array.isArray(items) || !items.length) {
     target.innerHTML = '<div class="empty">Belum ada dokumen yang tersedia.</div>';
     return;
   }
 
-  const iconMap = {
-    PASPOR: "📄",
-    VISA: "📕",
-    VAKSIN: "💉",
-    TIKET: "📘",
-    FOTO: "🖼️"
-  };
-
+  const iconMap = {PASPOR:"📄",VISA:"📕",VAKSIN:"💉",TIKET:"📘",FOTO:"🖼️"};
   target.innerHTML = items.map(function(item) {
     const type = String(item.jenis_dokumen || "DOKUMEN").trim().toUpperCase();
     const title = item.jenis_dokumen || item.nama_file || "Dokumen";
     const fileName = item.nama_file || "";
     const fileUrl = String(item.drive_url || "").trim();
     const fileId = String(item.drive_file_id || "").trim();
-    const previewUrl = fileId
-      ? "https://drive.google.com/file/d/" + encodeURIComponent(fileId) + "/preview"
-      : fileUrl;
-
+    const previewUrl = fileId ? "https://drive.google.com/file/d/" + encodeURIComponent(fileId) + "/preview" : fileUrl;
     const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(fileName);
-    const isPdf = /\.pdf$/i.test(fileName) || !isImage;
     const directUrl = fileUrl || (fileId ? "https://drive.google.com/file/d/" + encodeURIComponent(fileId) + "/view" : "");
     const imageUrl = fileId ? "https://drive.google.com/uc?export=view&id=" + encodeURIComponent(fileId) : fileUrl;
+    const viewerUrl = isImage ? imageUrl : (previewUrl || directUrl);
+    const viewerKind = isImage ? "image" : "pdf";
+    const viewerAttrs = 'data-doc-url="' + escapeHtml(directUrl || viewerUrl) + '" data-doc-view-url="' + escapeHtml(viewerUrl) + '" data-doc-kind="' + viewerKind + '" data-doc-title="' + escapeHtml(title) + '"';
 
     let preview = "";
     if (isImage && directUrl) {
       preview = `
-        <button class="document-preview document-preview-image" type="button" data-doc-url="${escapeHtml(directUrl)}" aria-label="Buka ${escapeHtml(title)}">
+        <button class="document-preview document-preview-image" type="button" ${viewerAttrs} aria-label="Buka ${escapeHtml(title)}">
           <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(title)}" loading="lazy" onerror="this.parentElement.classList.add('document-preview-fallback');this.style.display='none';">
           <span class="document-preview-fallback-label">${iconMap[type] || "📄"}<br><small>Ketuk untuk membuka</small></span>
         </button>`;
-    } else if (isPdf && previewUrl) {
+    } else if (previewUrl) {
       preview = `
-        <button class="document-preview" type="button" data-doc-url="${escapeHtml(directUrl || previewUrl)}" aria-label="Buka ${escapeHtml(title)}">
+        <button class="document-preview" type="button" ${viewerAttrs} aria-label="Buka ${escapeHtml(title)}">
           <iframe src="${escapeHtml(previewUrl)}" title="Preview ${escapeHtml(title)}" loading="lazy" tabindex="-1"></iframe>
-          <span class="document-preview-overlay">Buka dokumen ↗</span>
+          <span class="document-preview-overlay">Buka di halaman ini ↓</span>
         </button>`;
     } else {
       preview = `
-        <button class="document-preview document-preview-empty" type="button" data-doc-url="${escapeHtml(directUrl)}" aria-label="Buka ${escapeHtml(title)}">
+        <button class="document-preview document-preview-empty" type="button" ${viewerAttrs} aria-label="Buka ${escapeHtml(title)}">
           <span>${iconMap[type] || "📄"}</span><small>Preview belum tersedia</small>
         </button>`;
     }
 
-    const action = directUrl
-      ? `<button class="document-open-btn" type="button" data-doc-url="${escapeHtml(directUrl)}">👁 Lihat ${escapeHtml(title)}</button>`
+    const action = viewerUrl
+      ? `<button class="document-open-btn" type="button" ${viewerAttrs}>👁 Lihat ${escapeHtml(title)}</button>`
       : `<span class="document-meta">${escapeHtml(item.status || "Tersedia")}</span>`;
 
     return `
@@ -4416,16 +4575,16 @@ function renderDocuments(items) {
       </article>`;
   }).join("");
 
-  target.querySelectorAll("[data-doc-url]").forEach(function(el) {
-    el.addEventListener("click", function(e) {
-      const url = String(el.dataset.docUrl || "").trim();
+  setupSPIDESTDocumentViewer();
+  target.querySelectorAll("[data-doc-view-url]").forEach(function(el) {
+    el.addEventListener("click", function(event) {
+      const url = String(el.dataset.docViewUrl || "").trim();
       if (!url) return;
-      e.preventDefault();
-      window.open(url, "_blank", "noopener,noreferrer");
+      event.preventDefault();
+      openSPIDESTDocumentViewer(String(el.dataset.docTitle || "Dokumen Jamaah"), url, String(el.dataset.docKind || "pdf"));
     });
   });
 }
-
 
 /* ==========================================================
    ITINERARY DINAMIS PER TANGGAL
@@ -4613,11 +4772,14 @@ async function loadDashboard() {
     console.warn("SPIDEST me:",me.reason?.message||me.reason);
   }
 
-  if(roomlist.status==="fulfilled"){
-    renderAccommodation(roomlist.value.data||{});
-  }else{
+  const accommodationData = {
+    roomlist: roomlist.status === "fulfilled" ? (roomlist.value.data || {}) : {},
+    profile: me.status === "fulfilled" ? (me.value.data || {}) : {},
+    session: session
+  };
+  renderAccommodation(accommodationData);
+  if(roomlist.status!=="fulfilled"){
     hadError=true;
-    renderAccommodation({});
     console.warn("SPIDEST roomlist:",roomlist.reason?.message||roomlist.reason);
   }
 
@@ -6313,6 +6475,7 @@ function setActiveNav(pageId){
 
 function showAppPage(pageId,navKey,skipHistory){
   if(!hasValidSPIDESTSession()){backToLogin();return;}
+  if(pageId==="documentsPage")setupSPIDESTDocumentViewer();
   if(!skipHistory){
     const current = history.state && history.state.spPage;
     if(current !== pageId){
