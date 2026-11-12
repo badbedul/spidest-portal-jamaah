@@ -3626,6 +3626,56 @@ body{background:var(--sp-bg)!important;color:#101010!important;font-family:Inter
 </nav>
 
 
+
+<style id="spidest-document-viewer-final">
+/* DOCUMENT VIEWER — hanya halaman Dokumen. Tidak mengubah halaman lain. */
+#documentsPage .document-card{padding:18px!important;}
+#documentsPage #documentsData{padding:0!important;display:grid;gap:14px;}
+#documentsPage .document-view-card{
+  overflow:hidden;
+  border:1px solid #e7e7e7;
+  border-radius:20px;
+  background:#fff;
+  box-shadow:0 10px 28px rgba(0,0,0,.045);
+}
+#documentsPage .document-view-head{padding:16px 16px 13px;}
+#documentsPage .document-view-title-wrap{display:flex;align-items:center;gap:12px;min-width:0;}
+#documentsPage .document-view-icon{
+  width:42px;height:42px;flex:0 0 42px;border-radius:13px;
+  display:grid;place-items:center;background:#050505;color:#fff;font-size:20px;
+}
+#documentsPage .document-view-kicker{font-size:9px;font-weight:900;letter-spacing:.16em;color:#ff0000;}
+#documentsPage .document-view-title{margin-top:3px;color:#111;font-size:15px;font-weight:900;}
+#documentsPage .document-view-head .document-meta{margin-top:3px;}
+#documentsPage .document-preview{
+  position:relative;display:block;width:100%;height:260px;padding:0;border:0;
+  background:#f1f1f1;overflow:hidden;cursor:pointer;
+}
+#documentsPage .document-preview iframe{width:100%;height:100%;border:0;pointer-events:none;background:#fff;}
+#documentsPage .document-preview-image{background:#f5f5f5;}
+#documentsPage .document-preview-image img{width:100%;height:100%;object-fit:contain;display:block;}
+#documentsPage .document-preview-fallback-label{display:none;position:absolute;inset:0;place-items:center;text-align:center;color:#777;font-size:34px;}
+#documentsPage .document-preview-fallback-label small{display:block;font-size:11px;font-weight:800;color:#777;}
+#documentsPage .document-preview-fallback .document-preview-fallback-label{display:grid;}
+#documentsPage .document-preview-overlay{
+  position:absolute;right:12px;bottom:12px;padding:8px 10px;border-radius:999px;
+  background:rgba(5,5,5,.88);color:#fff;font-size:10px;font-weight:900;
+}
+#documentsPage .document-preview-empty{display:grid;place-items:center;align-content:center;gap:7px;color:#777;}
+#documentsPage .document-preview-empty span{font-size:42px;}
+#documentsPage .document-preview-empty small{font-size:10px;font-weight:800;}
+#documentsPage .document-view-footer{padding:13px 16px 16px;display:flex;justify-content:flex-end;}
+#documentsPage .document-open-btn{
+  width:100%;border:1px solid #e3e3e3;border-radius:13px;background:#050505;color:#fff;
+  padding:12px 14px;font-size:11px;font-weight:900;cursor:pointer;
+}
+#documentsPage .document-open-btn:active{transform:translateY(1px);}
+@media(max-width:430px){
+  #documentsPage .document-preview{height:230px;}
+  #documentsPage .document-view-head{padding:14px 14px 11px;}
+  #documentsPage .document-view-footer{padding:11px 14px 14px;}
+}
+</style>
 <script>
 "use strict";
 
@@ -4295,81 +4345,85 @@ function dateOnlyToUtc(value) {
    ========================================================== */
 
 function renderDocuments(items) {
+  const target = $("documentsData");
 
-  const target =
-    $("documentsData");
-
-  if (
-    !Array.isArray(items) ||
-    !items.length
-  ) {
-
-    target.innerHTML =
-      '<div class="empty">Belum ada dokumen yang tersedia.</div>';
-
+  if (!Array.isArray(items) || !items.length) {
+    target.innerHTML = '<div class="empty">Belum ada dokumen yang tersedia.</div>';
     return;
   }
 
+  const iconMap = {
+    PASPOR: "📄",
+    VISA: "📕",
+    VAKSIN: "💉",
+    TIKET: "📘",
+    FOTO: "🖼️"
+  };
 
-  target.innerHTML =
-    items.map(function(item) {
+  target.innerHTML = items.map(function(item) {
+    const type = String(item.jenis_dokumen || "DOKUMEN").trim().toUpperCase();
+    const title = item.jenis_dokumen || item.nama_file || "Dokumen";
+    const fileName = item.nama_file || "";
+    const fileUrl = String(item.drive_url || "").trim();
+    const fileId = String(item.drive_file_id || "").trim();
+    const previewUrl = fileId
+      ? "https://drive.google.com/file/d/" + encodeURIComponent(fileId) + "/preview"
+      : fileUrl;
 
-      let action = "";
+    const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(fileName);
+    const isPdf = /\.pdf$/i.test(fileName) || !isImage;
+    const directUrl = fileUrl || (fileId ? "https://drive.google.com/file/d/" + encodeURIComponent(fileId) + "/view" : "");
+    const imageUrl = fileId ? "https://drive.google.com/uc?export=view&id=" + encodeURIComponent(fileId) : fileUrl;
 
-      if (item.drive_url) {
+    let preview = "";
+    if (isImage && directUrl) {
+      preview = `
+        <button class="document-preview document-preview-image" type="button" data-doc-url="${escapeHtml(directUrl)}" aria-label="Buka ${escapeHtml(title)}">
+          <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(title)}" loading="lazy" onerror="this.parentElement.classList.add('document-preview-fallback');this.style.display='none';">
+          <span class="document-preview-fallback-label">${iconMap[type] || "📄"}<br><small>Ketuk untuk membuka</small></span>
+        </button>`;
+    } else if (isPdf && previewUrl) {
+      preview = `
+        <button class="document-preview" type="button" data-doc-url="${escapeHtml(directUrl || previewUrl)}" aria-label="Buka ${escapeHtml(title)}">
+          <iframe src="${escapeHtml(previewUrl)}" title="Preview ${escapeHtml(title)}" loading="lazy" tabindex="-1"></iframe>
+          <span class="document-preview-overlay">Buka dokumen ↗</span>
+        </button>`;
+    } else {
+      preview = `
+        <button class="document-preview document-preview-empty" type="button" data-doc-url="${escapeHtml(directUrl)}" aria-label="Buka ${escapeHtml(title)}">
+          <span>${iconMap[type] || "📄"}</span><small>Preview belum tersedia</small>
+        </button>`;
+    }
 
-        action = `
-          <a
-            href="${escapeHtml(item.drive_url)}"
-            target="_blank"
-            rel="noopener">
-            BUKA
-          </a>
-        `;
+    const action = directUrl
+      ? `<button class="document-open-btn" type="button" data-doc-url="${escapeHtml(directUrl)}">👁 Lihat ${escapeHtml(title)}</button>`
+      : `<span class="document-meta">${escapeHtml(item.status || "Tersedia")}</span>`;
 
-      } else {
-
-        action = `
-          <span class="document-meta">
-            ${escapeHtml(
-              item.status ||
-              "Tersedia"
-            )}
-          </span>
-        `;
-      }
-
-
-      return `
-
-        <div class="document">
-
-          <div>
-
-            <div class="document-title">
-              ${escapeHtml(
-                item.jenis_dokumen ||
-                item.nama_file ||
-                "Dokumen"
-              )}
+    return `
+      <article class="document-view-card">
+        <div class="document-view-head">
+          <div class="document-view-title-wrap">
+            <span class="document-view-icon">${iconMap[type] || "📄"}</span>
+            <div>
+              <div class="document-view-kicker">${escapeHtml(type)}</div>
+              <div class="document-view-title">${escapeHtml(title)}</div>
+              <div class="document-meta">${escapeHtml(fileName)}</div>
             </div>
-
-            <div class="document-meta">
-              ${escapeHtml(
-                item.nama_file ||
-                ""
-              )}
-            </div>
-
           </div>
-
-          ${action}
-
         </div>
+        ${preview}
+        <div class="document-view-footer">${action}</div>
+      </article>`;
+  }).join("");
 
-      `;
-
-    }).join("");
+  target.querySelectorAll("[data-doc-url]").forEach(function(el) {
+    el.addEventListener("click", function(e) {
+      const url = String(el.dataset.docUrl || "").trim();
+      if (!url) return;
+      e.preventDefault();
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
+  });
 }
 
 
